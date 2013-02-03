@@ -1,0 +1,22 @@
+
+page_header = {
+  div class="page-header" {
+    h1 { 
+      @title;
+      small @subtitle;
+    }   
+  }
+}
+
+
+div class="row" {
+  div class="span12" {
+    page_header title="Ajánlataink", subtitle = "az STA Travel élmény speciailstáitól";
+  }
+}
+                                                                 
+// .span12                                                             
+// .page-header                                                     
+// %h1.blue                                                      
+// = icn('briefcase', 'Ajánlataink')                           
+// %small= icn('check', 'az STA Travel élmény speciailstáitól')
