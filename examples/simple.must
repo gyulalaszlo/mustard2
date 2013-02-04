@@ -1,4 +1,41 @@
+// Line comments start with double slashes.
+// There are no block comments.
+
+// A static string
+"Hello world";
+
+// A simple static assignment
+utf-8 = "<meta charset='utf-8'>"; 
+
+utf-8;
+
+// a simple dynamic assignment
+p = { "<p>"; yield;  "</p>"; };
+h1 = { "<h1>"; yield;  "</h1>"; };
+div = { "<div class='"; @class;  ">"; yield;  "</div>"; };
+small = { "<small>"; yield;  "</small>"; };
+strong = { "<strong>"; yield;  "</strong>"; };
+code = { "<code>"; yield; "</code>"; };
+
+// Calling it
 p;
 p "Hello World";
-
 code "var x=15;;";
+
+p {
+  strong "Lorem ipsum dolor";
+  "Sit amet dolor";
+};
+
+page_header = {
+  div class="page-header" {
+    h1 { 
+      @title;
+      small @subtitle;
+    };   
+  };
+};
+
+page_header title="Hello" subtitle="World";
+page_header title=@title subtitle=@page_subtitle;
+

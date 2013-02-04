@@ -1,53 +1,127 @@
-/*
- * Classic example grammar, which recognizes simple arithmetic expressions like
- * "2*(3+4)". The parser generated from this grammar then computes their value.
- */
-
 start
-  = s:statement_list WS* { return s; }
+  = s:statement_list { return s; }
 
 statement_list "statement list"
-  = (s:statement SEP { return s; } )*
+  = s:statement_with_separator* WS* { return s; }
+
+statement_with_separator
+  = s:statement SEP { return s; }
 
 
 // A single statement
 statement "statement"
-  = call_statement
+  // yield has the highest priority.
+  = yield_statement
+  / assignment_statement
+  / call_statement
   / string_statement
+  ;
 
 
 call_statement "call"
-  = name:ID params:call_parameters? { return ['CALL', name, params]; }
+  //= name:ID contents:call_contents { return ['CALL', name, ['PARAMETERS'], contents]; }
+  = name:ID parameters:call_parameters contents:call_contents { return {type: 'CALL', name:name, parameters:parameters, contents:contents}; }
+  ;
 
 
 call_parameters "call parameters"
-  = s:STRING { return ['CALL_PARAMETER', s]; }
+  = f:call_parameter_single+ { var p={}; for(i=0; i < f.length; ++i) { var e = f[i]; p[e.name] = e.value; } return p; }
+  / { return []; }
+  ;
 
+call_parameter_single
+  = id:ID EQ s:string_statement { return {name:id, value:[s]}; }
+  ;
+
+
+call_contents "call contents block"
+  = block:statement_block { return block; }
+  // BRACE_OPEN statements:statement_list BRACE_CLOSE { return ['CONTENTS', statements]; }
+  / string:string_statement { return [string]; }
+  / { return []; }
+  ;
+
+
+// Assignment Statements
+assignment_statement "assignment"
+  = id:ID EQ value:assignment_value { return {type:'DEFINE', name:id, contents:value}; }
+  ;
+
+assignment_value "assignment value"
+  = block:statement_block { return block; }
+  / str:string_statement { return [str]; }
+  ;
+
+
+
+
+// String statements
+//
 
 string_statement "string"
-  = s:STRING { return ['STRING', s]; }
+  = s:STRING { return {type:'STRING', contents:s}; }
+  / interpolation:interpolation_statement { return interpolation; }
+  ;
 
+
+yield_statement "yield"
+  = YIELD { return {type:'YIELD'}; }
+  ;
+
+
+// Interpolation statement
+interpolation_statement "interpolation"
+  = v:VARIABLE_ID { return {type: 'VARIABLE', name: v}; }
+  ;
+
+
+// Common elements
+
+statement_block "statement block"
+  = BRACE_OPEN statements:statement_list BRACE_CLOSE { return statements; }
+  ;
 
 /* Tokens */
 
 
 // Whitespace (ignored)
-WS "Whitespace" 
-  = [ \t\n]+ { return; }
+WS "whitespace" 
+  = [ \t\n\r]+ { return; }
+  / '//' [^\n\r]* { return; } 
 
 
 SEP "Semicolon"
   = WS* ';'
 
+BRACE_OPEN "opening brace"
+  = WS* '{'
+
+BRACE_CLOSE "closing brace"
+  = WS* '}'
+
+EQ "equal sign"
+  = WS* '='
+
+YIELD "yield statement"
+  = WS* 'yield'
+
+
 // An identified
 ID "Identifier" 
   = WS*  id:ID_INTERNAL { return id; }
+
+// An identified
+VARIABLE_ID "variable identifier" 
+  = WS* '@' id:ID_INTERNAL { return id; }
 
 ID_INTERNAL
   = f:[a-zA-Z_] r:[a-zA-Z0-9\-_]+ { return f + r.join('') }
   / f:[a-zA-Z_] { return f; }
 
 STRING = WS* "\"" str:[^"]* "\"" { return str.join(''); }
+
+
+
 /*
 
 additive
