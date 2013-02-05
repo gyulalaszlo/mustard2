@@ -1,0 +1,12 @@
+tag = { "<"; @name; ">"; yield; "</"; @name; ">"; };
+
+h1 = { tag name="h1" { yield; }; };
+div = { tag name="div" { yield; }; };
+
+div {
+  h1 "Hello";
+};
+
+@products -> ( @pr ) {
+    div { h1 @pr.name; "|"; };
+};

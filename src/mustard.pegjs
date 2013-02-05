@@ -13,6 +13,7 @@ statement "statement"
   // yield has the highest priority.
   = yield_statement
   / assignment_statement
+  / scope_statement
   / call_statement
   / string_statement
   ;
@@ -53,6 +54,14 @@ assignment_value "assignment value"
   ;
 
 
+// Scope statements
+scope_statement "scope"
+  = v:VARIABLE_ID RIGHT_ARROW 
+    PAREN_OPEN s:VARIABLE_ID PAREN_CLOSE
+    statements:statement_block
+    { return {type: 'SCOPE', open:v, locals: [s], contents: statements}; }
+  ;
+
 
 
 // String statements
@@ -71,7 +80,8 @@ yield_statement "yield"
 
 // Interpolation statement
 interpolation_statement "interpolation"
-  = v:VARIABLE_ID { return {type: 'VARIABLE', name: v}; }
+  = v:VARIABLE_ID k:('.' ke:ID_INTERNAL { return ke; } )+ { return {type: 'VARIABLE', name: v, sub_keys: k}; }
+  / v:VARIABLE_ID { return {type: 'VARIABLE', name: v, sub_keys: []}; }
   ;
 
 
@@ -99,8 +109,17 @@ BRACE_OPEN "opening brace"
 BRACE_CLOSE "closing brace"
   = WS* '}'
 
+PAREN_OPEN "opening parenthesis"
+  = WS* '('
+
+PAREN_CLOSE "closing parenthesis"
+  = WS* ')'
+
 EQ "equal sign"
   = WS* '='
+
+RIGHT_ARROW "right arrow"
+  = WS* '->'
 
 YIELD "yield statement"
   = WS* 'yield'
