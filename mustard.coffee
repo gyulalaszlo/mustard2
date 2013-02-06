@@ -40,6 +40,20 @@ Tokens =
     get_contents: (t)-> t[3][1..]
     set_contents: (t, contents) -> t[3] = ['CONTENTS', contents...]
 
+  # Returns true if the tokens can be evaluated compile time.
+  is_compile_time: (tokens)->
+    return false unless tokens
+    for t in tokens
+      return false if t.type != 'STRING' 
+    true
+
+  compile_time_eval: (tokens)->
+    o = []
+    for t in tokens
+      o.push t.contents
+    o.join ''
+
+
 
 # Any internal error tries to trigger a handler from these.
 error_handlers =
@@ -171,9 +185,11 @@ Opcodes =
   push: (value)-> { type:"PUSH", value:value}
   yield: ()-> {type:"YIELD"}
   local: (name, keys)-> {type:"VAR", name:name, sub_keys: keys}
+  scoped_bool: (name)-> {type:"SCOPED_BOOL", name:name}
   scoped_local: (name, as)-> {type:"SCOPED_SINGLE", name:name, as:as}
   scoped_dict: (name, as1, as2)-> {type:"SCOPED_DICT", name:name, as:[as1, as2]}
   scope_end: (name)-> {type:"END_SCOPE", name: name}
+
   
 
 
@@ -289,7 +305,7 @@ Stack =
     level = stack.levels[id]
     if level == undefined
       #return null
-      log_error "Cannot find level", JSON.stringify(id), 'in', stack.levels
+      log_error "Cannot find level", JSON.stringify(id), 'in', JSON.stringify(stack)
       return null
     val = level.locals[name]
     return val if val != null
@@ -353,6 +369,7 @@ class EvaluationStack
     @find_local( layers[0..-2], name )
 
 
+
 # The main evaluator.
 evaluate_contents = (o, content_tokens, blocks, definitions, stack, e_stack, contents = [])->
   for token in content_tokens
@@ -376,50 +393,88 @@ evaluate_contents = (o, content_tokens, blocks, definitions, stack, e_stack, con
         else
           o.push Opcodes.local( token.name, token.sub_keys )
       when 'SCOPE'
+        scoped_local_name = token.open.name
+        current_locals = Stack.get_current_locals(e_stack)
+        scope_target = null
+        is_compile_time = false
         # @_ is a special variable available at compile time,
         # contining all the parameters passed to the current
         # caller or all the locals when used at the top level.
-        if token.open == '_'
-          for k, v of Stack.get_current_locals(e_stack)
-            console.log "K,V",k,v
-            as = token.locals
-            locals_used = {}
-            locals_used[as[0]] = [{ type: 'STRING', contents: k }]
-            locals_used[as[1]] = v
-            Stack.push_level e_stack, locals_used
-            log_verbose 'stack', JSON.stringify(e_stack, null, 4)
-            # Evaluate the contents of the scope.
-            evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
-            # Remove the locals from the scope from the stack.
-            Stack.pop_level e_stack
+        if scoped_local_name == '_'
+          scope_target = current_locals
+          is_compile_time = true
+        else
+          scope_target = Stack.find_local e_stack, scoped_local_name
+          is_compile_time = Tokens.is_compile_time scope_target
+          if is_compile_time
+            scope_target = Tokens.compile_time_eval scope_target
 
-          break
 
         locals_count = token.locals.length
         switch locals_count
+          when 0
+            unless is_compile_time
+              o.push Opcodes.scoped_bool( token.open.name)
+              locals_used = {}
+              # add a new level to the stack
+              Stack.push_level e_stack, locals_used
+              # Evaluate the contents of the scope.
+              evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
+              # Remove the locals from the scope from the stack.
+              Stack.pop_level e_stack
+
           # If a single local is used, its either a single object
           # or an array iterating single objects.
           when 1
             l = token.locals[0]
-            o.push Opcodes.scoped_local( token.open, l)
-            locals_used = {}
-            locals_used[l] = Opcodes.local(l)
-            Stack.push_level e_stack, locals_used
+            unless is_compile_time
+              o.push Opcodes.scoped_local( token.open.name, l)
+              locals_used = {}
+              locals_used[l] = Opcodes.local(l)
+              # add a new level to the stack
+              Stack.push_level e_stack, locals_used
+              # Evaluate the contents of the scope.
+              evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
+              # Remove the locals from the scope from the stack.
+              Stack.pop_level e_stack
+
+          # Two locals open a dictionnary by key/value pairs
           when 2
             [k,v] = token.locals
-            o.push Opcodes.scoped_dict( token.open, k, v)
-            locals_used = {}
-            locals_used[k] = Opcodes.local(k)
-            locals_used[v] = Opcodes.local(v)
-            Stack.push_level e_stack, locals_used
+            unless is_compile_time
+              locals_used = {}
+              o.push Opcodes.scoped_dict( token.open.name, k, v)
+              locals_used[k] = Opcodes.local(k)
+              locals_used[v] = Opcodes.local(v)
+              # add a new level to the stack
+              Stack.push_level e_stack, locals_used
+              # Evaluate the contents of the scope.
+              evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
+              # Remove the locals from the scope from the stack.
+              Stack.pop_level e_stack
 
-        # Evaluate the contents of the scope.
-        evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
-        # Remove the locals from the scope from the stack.
-        Stack.pop_level e_stack
+            else
+              for k, v of scope_target
+                as = token.locals
+                locals_used = {}
+                locals_used[as[0]] = [{ type: 'STRING', contents: k }]
+                locals_used[as[1]] = v
+                # add a new level to the stack
+                Stack.push_level e_stack, locals_used
+                # Evaluate the contents of the scope.
+                evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
+                # Remove the locals from the scope from the stack.
+                Stack.pop_level e_stack
+
+
+        ## Evaluate the contents of the scope.
+        #evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
+        ## Remove the locals from the scope from the stack.
+        #Stack.pop_level e_stack
         #stack.pop()
         # Add the scope end opcode
-        o.push Opcodes.scope_end( token.open )
+        unless is_compile_time
+          o.push Opcodes.scope_end( token.open.name )
       when 'YIELD'
         Stack.push_yield_context e_stack
         evaluate_contents(o, Stack.get_yield_contents(e_stack), blocks, definitions, stack, e_stack, [] )
@@ -508,28 +563,42 @@ generate_javascript_code = (opcodes)->
   for opcode in opcodes
     switch opcode.type
       when 'PUSH' then o.push "__buf.push(#{JSON.stringify opcode.value});"
-      when 'VAR' 
+      when 'VAR'
         o.push "__buf.push(#{_.flatten([opcode.name, opcode.sub_keys ]).join('.')});"
       when 'SCOPE'
         o.push "function scope_#{_s.underscored opcode.name }() {"
       when 'END_SCOPE'
+        o.push "mustard_end_scope(__scope);"
         o.push "}}"
-      when 'SCOPED_SINGLE'
+
+      when 'SCOPED_BOOL'
         as = opcode.as
         ns = JSON.stringify opcode.name
         o.push "{ // Scope #{ opcode.name }"
-        o.push "var __objs = mustard_get_single( __scope,  #{ns});"
-        o.push "for(var #{as}_i = 0; #{as}_i < __objs.length; ++#{as}_i) {"
-        o.push "var #{as} = __objs[#{as}_i];"
+        o.push "var __check_val = mustard_get_bool( __scope,  #{ns});"
+        o.push "if(__check_val) {"
+        o.push "mustard_start_scope( __scope, {} );"
+
+      when 'SCOPED_SINGLE'
+        as = opcode.as
+        ns = JSON.stringify opcode.name
+        objs_name = _.uniqueId '__objs'
+        o.push "{ // Scope #{ opcode.name }"
+        o.push "var #{objs_name} = mustard_get_single( __scope,  #{ns});"
+        o.push "for(var #{as}_i = 0; #{as}_i < #{objs_name}.length; ++#{as}_i) {"
+        o.push "var #{as} = #{objs_name}[#{as}_i];"
+        o.push "mustard_start_scope( __scope, {'#{as}':#{as}});"
 
       when 'SCOPED_DICT'
         [as, as_val] = opcode.as
         ns = JSON.stringify opcode.name
+        objs_name = _.uniqueId '__objs'
         o.push "{ // Scope #{ opcode.name }"
-        o.push "var __objs = mustard_get_dict( __scope,  #{ns});"
-        o.push "for(var #{as}_i = 0; #{as}_i < __objs.length; ++#{as}_i) {"
-        o.push "var #{as} = __objs[#{as}_i][0];"
-        o.push "var #{as_val} = __objs[#{as}_i][1];"
+        o.push "var #{objs_name} = mustard_get_dict( __scope,  #{ns});"
+        o.push "for(var #{as}_i = 0; #{as}_i < #{objs_name}.length; ++#{as}_i) {"
+        o.push "var #{as} = #{objs_name}[#{as}_i][0];"
+        o.push "var #{as_val} = #{objs_name}[#{as}_i][1];"
+        o.push "mustard_start_scope( __scope, {'#{as}':#{as}, '#{as_val}':#{as_val} });"
 
 
   o.push "return __buf.join('');", '}', 'run_template(locals);'
@@ -571,12 +640,12 @@ parse_tokenized_template = (filename, tokens, options={})->
 
   title = "TITLE"
   subtitle = "SUBTITLE"
-  product = {name: "PRODUCT NAME", tagline: "PRODUCT TAGLINE" }
-  product2 = {name: "PRODUCT2 NAME", tagline: "PRODUCT2 TAGLINE" }
+  product = {name: "PRODUCT NAME", tagline: "PRODUCT TAGLINE", tags: ['product', 'small'] }
+  product2 = {name: "PRODUCT2 NAME", tagline: "PRODUCT2 TAGLINE" , tags: ['product', 'large'] }
   page_subtitle = "PAGE SUBTITLE"
   current_user = { name: "Miles Davis", id:"miles.davis@gmail.com"}
   products = [ product, product2 ]
-  locals = { products: products, current_user: current_user }
+  locals = { products: products, current_user: current_user, users: [current_user] }
   console.log "--------------------"
   try
     console.log eval(js_code)
@@ -632,17 +701,41 @@ mustard_new_scope = (locals)-> [locals]
 # Start a scope.
 mustard_start_scope = (scope, object)-> scope.push object
 mustard_end_scope = (scope, object)-> scope.pop
+
+mustard_get_from_scope = (scope, name)->
+  idx = scope.length - 1
+  while idx >= 0
+    o = scope[idx]
+    v = o[name]
+    return v if v
+    idx -= 1
+  return null
+
+
+
 mustard_get_single = (scope, name)->
-  o = _.last( scope )[name]
+  o = mustard_get_from_scope(scope,name)
   if _.isArray(o)
     o
   else
     [o]
 
 mustard_get_dict = (scope, name)->
-  o = _.last( scope )[name]
+  o = mustard_get_from_scope(scope,name)
   if _.isObject(o)
     _.pairs o
   else
     []
+
+
+mustard_get_bool = (scope, name)->
+  o = mustard_get_from_scope(scope,name)
+  # return false for null, undefined and false
+  return false unless o
+  # return false for empty strings
+  return false if _.isString(o) && o.length == 0
+  # return false for empty arrays
+  return false if _.isArray(o) && o.length == 0
+  true
+
 

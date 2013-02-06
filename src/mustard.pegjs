@@ -5,7 +5,7 @@ statement_list "statement list"
   = s:statement_with_separator* WS* { return s; }
 
 statement_with_separator
-  = s:statement SEP { return s; }
+  = s:statement WS* ';'? { return s; }
 
 
 // A single statement
@@ -56,10 +56,10 @@ assignment_value "assignment value"
 
 // Scope statements
 scope_statement "scope"
-  = v:VARIABLE_ID RIGHT_ARROW 
-    PAREN_OPEN s:VARIABLE_ID+ PAREN_CLOSE
+  = v:variable filters:interpolation_filter* RIGHT_ARROW 
+    s:(PAREN_OPEN vars:VARIABLE_ID+ PAREN_CLOSE {return vars; })?
     statements:statement_block
-    { return {type: 'SCOPE', open:v, locals: s, contents: statements}; }
+    { return {type: 'SCOPE', open:v, locals: s, contents: statements, filters:filters}; }
   ;
 
 
@@ -80,10 +80,18 @@ yield_statement "yield"
 
 // Interpolation statement
 interpolation_statement "interpolation"
+  = v:variable filters:interpolation_filter* { v.filters=filters; return v; }
+  ;
+
+variable "variable with possible access chain"
   = v:VARIABLE_ID k:('.' ke:ID_INTERNAL { return ke; } )+ { return {type: 'VARIABLE', name: v, sub_keys: k}; }
   / v:VARIABLE_ID { return {type: 'VARIABLE', name: v, sub_keys: []}; }
   ;
 
+
+interpolation_filter "interpolation filter"
+  = PIPE filter_name:ID params:string_statement* { return {type: "FILTER", name:filter_name, params: params}; }
+  ;
 
 // Common elements
 
@@ -123,6 +131,9 @@ RIGHT_ARROW "right arrow"
 
 YIELD "yield statement"
   = WS* 'yield'
+
+PIPE "pipe"
+  = WS* '|'
 
 
 // An identified

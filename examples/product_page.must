@@ -1,35 +1,51 @@
-tag = { "<"; @_name; ">"; yield; "</"; @_name; ">"; };
-html_tag = { 
-  "<"; @_name;
 
+// Base language element for an html tag.
+_tag = { 
+  "<" @_name
 
-  @_ -> (@k @v) {" "; @k; "='"; @v; "'"; };
-  ">"; 
-  yield; 
-  "</"; @_name; ">"; 
-};
+  // Show the attributes
+  @_ -> (@k @v) {
+    @k | neq "_name" -> {
+      " " @k "='" @v "' " 
+    }
+  }
+
+  ">" 
+  // Show the contents
+  yield 
+  "</" @_name ">" 
+}
 
 nl = { "
---------------- "; };
+--------------- " }
 
-h1 = { tag _name="h1" { yield; }; };
-div = { tag _name="div" { yield; }; };
+h1 = { _tag _name="h1" { yield } }
+div = { _tag _name="div" { yield } }
 
 div {
-  h1 "Hello";
-};
+  h1 "Hello"
+}
 
 @products -> ( @pr ) {
-    div { h1 @pr.name; "|"; };
-};
+    div { 
+      h1 @pr.name 
+      "|"
+      @pr.tags -> (@tag) {
+        @tag
+      }
+    }
+}
 
 nl;
 
-tag _name="ul" {
-  @current_user -> (@key @value) {
-    html_tag _name="li" class="span4" {
-      @value;
-    };
-  };
-};
+@users -> (@user) {
+  _tag _name="ul" {
+    @user -> (@key @value) {
+      _tag _name="li" class="span4" {
+        _tag _name="strong" { @key ":" }
+        @value
+      }
+    }
+  }
+}
 
