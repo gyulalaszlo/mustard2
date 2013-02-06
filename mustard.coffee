@@ -172,6 +172,7 @@ Opcodes =
   yield: ()-> {type:"YIELD"}
   local: (name, keys)-> {type:"VAR", name:name, sub_keys: keys}
   scoped_local: (name, as)-> {type:"SCOPED_SINGLE", name:name, as:as}
+  scoped_dict: (name, as1, as2)-> {type:"SCOPED_DICT", name:name, as:[as1, as2]}
   scope_end: (name)-> {type:"END_SCOPE", name: name}
   
 
@@ -214,6 +215,8 @@ Stack =
 
   # Get the current level of the stack.
   current_level: (stack)-> stack.levels[ stack.current ]
+
+  get_current_locals: (stack)-> Stack.current_level(stack).locals
 
   # Push a new level on top of the running stack.
   push_level: (stack, locals)->
@@ -373,20 +376,48 @@ evaluate_contents = (o, content_tokens, blocks, definitions, stack, e_stack, con
         else
           o.push Opcodes.local( token.name, token.sub_keys )
       when 'SCOPE'
-        # If a single local is used, its either a single object
-        # or an array iterating single objects.
-        if token.locals.length == 1
-          l = token.locals[0]
-          o.push Opcodes.scoped_local( token.open, l)
-          stack.push "scope:#{token.open}", {l:Opcodes.local(l)}
-          locals_used = {}
-          locals_used[l] = Opcodes.local(l)
-          Stack.push_level e_stack, locals_used
+        # @_ is a special variable available at compile time,
+        # contining all the parameters passed to the current
+        # caller or all the locals when used at the top level.
+        if token.open == '_'
+          for k, v of Stack.get_current_locals(e_stack)
+            console.log "K,V",k,v
+            as = token.locals
+            locals_used = {}
+            locals_used[as[0]] = [{ type: 'STRING', contents: k }]
+            locals_used[as[1]] = v
+            Stack.push_level e_stack, locals_used
+            log_verbose 'stack', JSON.stringify(e_stack, null, 4)
+            # Evaluate the contents of the scope.
+            evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
+            # Remove the locals from the scope from the stack.
+            Stack.pop_level e_stack
+
+          break
+
+        locals_count = token.locals.length
+        switch locals_count
+          # If a single local is used, its either a single object
+          # or an array iterating single objects.
+          when 1
+            l = token.locals[0]
+            o.push Opcodes.scoped_local( token.open, l)
+            locals_used = {}
+            locals_used[l] = Opcodes.local(l)
+            Stack.push_level e_stack, locals_used
+          when 2
+            [k,v] = token.locals
+            o.push Opcodes.scoped_dict( token.open, k, v)
+            locals_used = {}
+            locals_used[k] = Opcodes.local(k)
+            locals_used[v] = Opcodes.local(v)
+            Stack.push_level e_stack, locals_used
+
         # Evaluate the contents of the scope.
         evaluate_contents( o, token.contents, blocks, definitions, stack, e_stack, contents)
         # Remove the locals from the scope from the stack.
         Stack.pop_level e_stack
-        stack.pop()
+        #stack.pop()
         # Add the scope end opcode
         o.push Opcodes.scope_end( token.open )
       when 'YIELD'
@@ -407,17 +438,17 @@ evaluate_contents = (o, content_tokens, blocks, definitions, stack, e_stack, con
           error_handlers.ParseError( "Unknown symbol to call:", token.name) unless block_tokens
         else
           # Add the parameters to the stack.
-          stack.push token.name, token.parameters
-          stack.push_yield token.contents
+          #stack.push token.name, token.parameters
+          #stack.push_yield token.contents
           
           stack_frame_id = Stack.push_level e_stack, token.parameters
           Stack.push_yield_level e_stack, token.contents
           evaluate_contents(o, block_tokens, blocks, definitions, stack, e_stack, token.contents)
           Stack.pop_yield_level e_stack
           Stack.pop_level e_stack
-          stack.pop_yield
+          #stack.pop_yield
           # Pop the stack.
-          stack.pop()
+          #stack.pop()
   # return the constructed list
   o
 
@@ -461,9 +492,10 @@ format_opcode_list = (list)->
       when 'VAR' then parameters = [ opcode.name ]
       when 'SCOPE' then parameters = [ opcode.name ]
       when 'END_SCOPE' then parameters = [ opcode.name ]
-      when 'SCOPED_LOCAL' then parameters = [ opcode.name, opcode.role ]
-    o.push "#{_s.rpad instruction, 12 } #{ parameters.join(', ')}"
+      when 'SCOPED_SINGLE' then parameters = [ opcode.name, opcode.as ]
+      when 'SCOPED_DICT' then parameters = [ opcode.name, opcode.as[0], opcode.as[1] ]
 
+    o.push "#{_s.rpad instruction, 12 } #{ parameters.join(', ')}"
   o.join "\n"
 
 
@@ -489,6 +521,15 @@ generate_javascript_code = (opcodes)->
         o.push "var __objs = mustard_get_single( __scope,  #{ns});"
         o.push "for(var #{as}_i = 0; #{as}_i < __objs.length; ++#{as}_i) {"
         o.push "var #{as} = __objs[#{as}_i];"
+
+      when 'SCOPED_DICT'
+        [as, as_val] = opcode.as
+        ns = JSON.stringify opcode.name
+        o.push "{ // Scope #{ opcode.name }"
+        o.push "var __objs = mustard_get_dict( __scope,  #{ns});"
+        o.push "for(var #{as}_i = 0; #{as}_i < __objs.length; ++#{as}_i) {"
+        o.push "var #{as} = __objs[#{as}_i][0];"
+        o.push "var #{as_val} = __objs[#{as}_i][1];"
 
 
   o.push "return __buf.join('');", '}', 'run_template(locals);'
@@ -533,8 +574,9 @@ parse_tokenized_template = (filename, tokens, options={})->
   product = {name: "PRODUCT NAME", tagline: "PRODUCT TAGLINE" }
   product2 = {name: "PRODUCT2 NAME", tagline: "PRODUCT2 TAGLINE" }
   page_subtitle = "PAGE SUBTITLE"
+  current_user = { name: "Miles Davis", id:"miles.davis@gmail.com"}
   products = [ product, product2 ]
-  locals = { products: products }
+  locals = { products: products, current_user: current_user }
   console.log "--------------------"
   try
     console.log eval(js_code)
@@ -596,4 +638,11 @@ mustard_get_single = (scope, name)->
     o
   else
     [o]
+
+mustard_get_dict = (scope, name)->
+  o = _.last( scope )[name]
+  if _.isObject(o)
+    _.pairs o
+  else
+    []
 

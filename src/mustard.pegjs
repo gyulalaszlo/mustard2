@@ -57,9 +57,9 @@ assignment_value "assignment value"
 // Scope statements
 scope_statement "scope"
   = v:VARIABLE_ID RIGHT_ARROW 
-    PAREN_OPEN s:VARIABLE_ID PAREN_CLOSE
+    PAREN_OPEN s:VARIABLE_ID+ PAREN_CLOSE
     statements:statement_block
-    { return {type: 'SCOPE', open:v, locals: [s], contents: statements}; }
+    { return {type: 'SCOPE', open:v, locals: s, contents: statements}; }
   ;
 
 

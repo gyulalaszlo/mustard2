@@ -1,7 +1,19 @@
-tag = { "<"; @name; ">"; yield; "</"; @name; ">"; };
+tag = { "<"; @_name; ">"; yield; "</"; @_name; ">"; };
+html_tag = { 
+  "<"; @_name;
 
-h1 = { tag name="h1" { yield; }; };
-div = { tag name="div" { yield; }; };
+
+  @_ -> (@k @v) {" "; @k; "='"; @v; "'"; };
+  ">"; 
+  yield; 
+  "</"; @_name; ">"; 
+};
+
+nl = { "
+--------------- "; };
+
+h1 = { tag _name="h1" { yield; }; };
+div = { tag _name="div" { yield; }; };
 
 div {
   h1 "Hello";
@@ -10,3 +22,14 @@ div {
 @products -> ( @pr ) {
     div { h1 @pr.name; "|"; };
 };
+
+nl;
+
+tag _name="ul" {
+  @current_user -> (@key @value) {
+    html_tag _name="li" class="span4" {
+      @value;
+    };
+  };
+};
+
