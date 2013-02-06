@@ -9,6 +9,9 @@ argv = require('optimist')
   .boolean(['dump_ast','dump_opcode','dump_compiled'])
   .argv
 
+mustard_runtime = require './src/mustard_runtime.coffee'
+Stack = require './src/stack.coffee'
+
 
 # Call tokens:
 # ['CALL', name, ['PARAMETERS'], ['CONTENTS']]
@@ -44,7 +47,7 @@ Tokens =
   is_compile_time: (tokens)->
     return false unless tokens
     for t in tokens
-      return false if t.type != 'STRING' 
+      return false if t.type != 'STRING'
     true
 
   compile_time_eval: (tokens)->
@@ -193,180 +196,6 @@ Opcodes =
   
 
 
-# ## The evaluation Stack
-#
-# The template opcode is evaluated using this stack.
-Stack =
-  # Create a new stack
-  make_stack: ->
-    o = { current:'root', levels: {}, yields: [], yielded_from:[], used_yields:[] }
-    o.levels.root = Stack.make_level 'root', null, {}
-    o
-
-  # Create a new level for the evaluation stack
-  make_level: (id, parent_id, locals)->
-    { id: id, locals: locals, parent_id: parent_id }
-
-  # Create a yield stack, that references a specific
-  # stack level as context.
-  make_yield_level: (id, level_id, contents )->
-    { id:id, contents: contents, level_id: level_id }
-
-
-  # Add a new level to the stack, with parent_id as the
-  # id of the stack level bellow it.
-  #
-  # Returns the id of the new stack level
-  #
-  # locals : The locals used on the current stack level.
-  add_level: (stack, parent_id, locals)->
-    id = _.uniqueId 'stack_'
-    stack.levels[id] = Stack.make_level(id, parent_id, locals)
-    id
-
-  # Remove a level from the stack.
-  remove_level: (stack, level_id)->
-    delete stack.levels[level_id]
-
-
-  # Get the current level of the stack.
-  current_level: (stack)-> stack.levels[ stack.current ]
-
-  get_current_locals: (stack)-> Stack.current_level(stack).locals
-
-  # Push a new level on top of the running stack.
-  push_level: (stack, locals)->
-    current = Stack.current_level stack
-    id = Stack.add_level stack, current.id, locals
-    stack.current = id
-
-
-  # Pop the topmost level of the stack
-  pop_level: (stack)->
-    current = Stack.current_level stack
-    stack.current = current.parent_id
-    id_to_remove = current.id
-    Stack.remove_level stack, current.id
-
-
-
-
-  push_yield_level: (stack, contents)->
-    id = _.uniqueId 'yield_'
-    level_id = stack.current
-    stack.yields.push Stack.make_yield_level( id, level_id, contents )
-
-
-  pop_yield_level: (stack)->
-    stack.yields.pop()
-
-  # Get the yield for the current context
-  get_yield: (stack)->
-    y = _.last stack.used_yields
-    unless y
-      console.log "Cannot find yield."
-      console.log "STACK:-------------------------------"
-      console.dir stack
-    y
-
-  # Get the contents of the yield for the current context.
-  get_yield_contents: (stack)-> Stack.get_yield(stack).contents
-
-
-  # Put the context of the yield on top of the existing stack (so it'll link
-  # it to the original level where it was declared)
-  push_yield_context: (stack)->
-    current = Stack.current_level stack
-    # Store the id of the current level so we can restore it later.
-    stack.yielded_from.push current.id
-    stack.used_yields.push stack.yields.pop()
-    current_yield = Stack.get_yield stack
-    # Create a new stack level and point it to the yield's context.
-    id = Stack.add_level stack, current_yield.level_id, {}
-    stack.current = id
-
-
-  pop_yield_context: (stack)->
-    old_context = stack.yielded_from.pop()
-    Stack.remove_level stack, stack.current
-    stack.current = old_context
-    stack.yields.push stack.used_yields.pop()
-
-
-
-
-
-  # Find a local in the stack.
-  # 
-  # id: the id of the top level of the stack to start the search
-  # from. If null, the search starts from the current level of the stack.
-  find_local: (stack, name, id=null)->
-    id = stack.current if id == null
-    level = stack.levels[id]
-    if level == undefined
-      #return null
-      log_error "Cannot find level", JSON.stringify(id), 'in', JSON.stringify(stack)
-      return null
-    val = level.locals[name]
-    return val if val != null
-    return null if level.parent_id == null
-    Stack.find_local stack, name, level.parent_id
-
-
-
-    
-
-
-
-# The stack for the evaluation of the templates
-class EvaluationStack
-
-  constructor: ->
-    @locals = []
-    @names = []
-    @yield_stack = []
-    @yield_indices = []
-
-
-  # add a new layer to the stack
-  push: (name, parameters)->
-    @names.push name
-    @locals.push parameters
-
-  pop: ->
-    @names.pop()
-    @locals.pop()
-
-
-  push_yield: (yield_contents)->
-    @yield_stack.push yield_contents
-
-  pop_yield: -> 
-    @yield_stack.pop()
-
-    
-
-  get_yield: ->
-    _.last( @yield_stack )
-
-  
-  get_local: (name)->
-    local = @find_local @locals, name
-    local
-
-
-
-  # try to find a local in the layers
-  find_local: (layers, name)->
-    # not found if we hit the last layer
-    return null if layers.length == 0
-    # try to find it in the top layer
-    if _.last(layers) == undefined
-      log_verbose "undefined layer", layers
-    local = _.last( layers )[name]
-    return local if local
-    # go recursive if not found
-    @find_local( layers[0..-2], name )
 
 
 
@@ -558,50 +387,48 @@ format_opcode_list = (list)->
 # Generate a javascript template from opcodes.
 generate_javascript_code = (opcodes)->
   scopes = []
-  o = ['function run_template(__locals) {', 'var __buf=[];', "var __scope=mustard_new_scope(__locals);"]
+  o = ['function run_template(__locals, __mustard) {', 'var __buf=[];', "var __scope=__mustard.new_scope(__locals);"]
 
   for opcode in opcodes
     switch opcode.type
       when 'PUSH' then o.push "__buf.push(#{JSON.stringify opcode.value});"
       when 'VAR'
         o.push "__buf.push(#{_.flatten([opcode.name, opcode.sub_keys ]).join('.')});"
-      when 'SCOPE'
-        o.push "function scope_#{_s.underscored opcode.name }() {"
       when 'END_SCOPE'
-        o.push "mustard_end_scope(__scope);"
+        o.push "__mustard.end_scope(__scope);"
         o.push "}}"
 
       when 'SCOPED_BOOL'
         as = opcode.as
         ns = JSON.stringify opcode.name
         o.push "{ // Scope #{ opcode.name }"
-        o.push "var __check_val = mustard_get_bool( __scope,  #{ns});"
+        o.push "var __check_val = __mustard.get_bool( __scope,  #{ns});"
         o.push "if(__check_val) {"
-        o.push "mustard_start_scope( __scope, {} );"
+        o.push "__mustard.start_scope( __scope, {} );"
 
       when 'SCOPED_SINGLE'
         as = opcode.as
         ns = JSON.stringify opcode.name
         objs_name = _.uniqueId '__objs'
         o.push "{ // Scope #{ opcode.name }"
-        o.push "var #{objs_name} = mustard_get_single( __scope,  #{ns});"
+        o.push "var #{objs_name} = __mustard.get_single( __scope,  #{ns});"
         o.push "for(var #{as}_i = 0; #{as}_i < #{objs_name}.length; ++#{as}_i) {"
         o.push "var #{as} = #{objs_name}[#{as}_i];"
-        o.push "mustard_start_scope( __scope, {'#{as}':#{as}});"
+        o.push "__mustard.start_scope( __scope, {'#{as}':#{as}});"
 
       when 'SCOPED_DICT'
         [as, as_val] = opcode.as
         ns = JSON.stringify opcode.name
         objs_name = _.uniqueId '__objs'
         o.push "{ // Scope #{ opcode.name }"
-        o.push "var #{objs_name} = mustard_get_dict( __scope,  #{ns});"
+        o.push "var #{objs_name} = __mustard.get_dict( __scope,  #{ns});"
         o.push "for(var #{as}_i = 0; #{as}_i < #{objs_name}.length; ++#{as}_i) {"
         o.push "var #{as} = #{objs_name}[#{as}_i][0];"
         o.push "var #{as_val} = #{objs_name}[#{as}_i][1];"
-        o.push "mustard_start_scope( __scope, {'#{as}':#{as}, '#{as_val}':#{as_val} });"
+        o.push "__mustard.start_scope( __scope, {'#{as}':#{as}, '#{as_val}':#{as_val} });"
 
 
-  o.push "return __buf.join('');", '}', 'run_template(locals);'
+  o.push "return __buf.join('');", '}', 'run_template(locals, mustard_runtime);'
   o.join "\n"
 
 
@@ -624,9 +451,8 @@ parse_tokenized_template = (filename, tokens, options={})->
     save_file "#{filename}.contents.json", contents, json:true
     save_file "#{filename}.defs.json", definitions, json:true
 
-  stack = new EvaluationStack
   e_stack = Stack.make_stack()
-  opcode_list = evaluate_contents([], contents, blocks, definitions, stack, e_stack)
+  opcode_list = evaluate_contents([], contents, blocks, definitions, null, e_stack)
   opcode_list = opcode_fold_constants opcode_list
   opcode_string = format_opcode_list opcode_list
 
@@ -695,47 +521,3 @@ parser = generate_parser 'src/mustard.pegjs', trackLineAndColumn: true
 
 for file in argv._
   compile_template_from_file parser, file, argv
-
-mustard_new_scope = (locals)-> [locals]
-
-# Start a scope.
-mustard_start_scope = (scope, object)-> scope.push object
-mustard_end_scope = (scope, object)-> scope.pop
-
-mustard_get_from_scope = (scope, name)->
-  idx = scope.length - 1
-  while idx >= 0
-    o = scope[idx]
-    v = o[name]
-    return v if v
-    idx -= 1
-  return null
-
-
-
-mustard_get_single = (scope, name)->
-  o = mustard_get_from_scope(scope,name)
-  if _.isArray(o)
-    o
-  else
-    [o]
-
-mustard_get_dict = (scope, name)->
-  o = mustard_get_from_scope(scope,name)
-  if _.isObject(o)
-    _.pairs o
-  else
-    []
-
-
-mustard_get_bool = (scope, name)->
-  o = mustard_get_from_scope(scope,name)
-  # return false for null, undefined and false
-  return false unless o
-  # return false for empty strings
-  return false if _.isString(o) && o.length == 0
-  # return false for empty arrays
-  return false if _.isArray(o) && o.length == 0
-  true
-
-
