@@ -1,0 +1,29 @@
+{
+  "name": "mustard2",
+  "version": "0.0.1",
+  "description": "Structured, data-driven templating for JavaScript",
+  "main": "mustard.coffee",
+  "directories": {
+    "example": "examples"
+  },
+  "dependencies": {
+    "optimist": "^0.6.1",
+    "pegjs": "^0.8.0",
+    "underscore": "^1.7.0",
+    "underscore.string": "^2.3.3"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/gyulalaszlo/mustard2.git"
+  },
+  "author": "Gyula Laszlo",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/gyulalaszlo/mustard2/issues"
+  },
+  "homepage": "https://github.com/gyulalaszlo/mustard2"
+}

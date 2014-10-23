@@ -149,6 +149,8 @@ parse_tokenized_template = (filename, tokens, options={})->
   js_code = generate_javascript_code opcode_list
   save_file "#{filename}.js", js_code
 
+  console.log "TESTING:"
+
   title = "TITLE"
   subtitle = "SUBTITLE"
   product = {name: "PRODUCT NAME", tagline: "PRODUCT TAGLINE", tags: ['product', 'small'] }
